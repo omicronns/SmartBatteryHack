@@ -16,33 +16,8 @@
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
-// Board: Arduino Uno or Arduino Mega
-
-#include <avr/wdt.h>
-
-#if defined (__AVR_ATmega328P__) || defined (__AVR_ATmega328__) // Arduino Uno hardware I2C pins
-    #define SDA_PORT PORTC
-    #define SDA_PIN 4
-    #define SCL_PORT PORTC
-    #define SCL_PIN 5
-
-#elif defined (__AVR_ATmega1280__) || defined (__AVR_ATmega2560__) // Arduino Mega hardware I2C pins
-    #define SDA_PORT PORTD
-    #define SDA_PIN 1
-    #define SCL_PORT PORTD
-    #define SCL_PIN 0
-
-#else // for other boards select I2C-pins here
-    #define SDA_PORT PORTC
-    #define SDA_PIN 4
-    #define SCL_PORT PORTC
-    #define SCL_PIN 5
-#endif
-
-#define I2C_PULLUP 1 // enable internal pullup resistors for I2C-pins
-#define I2C_SLOWMODE 1 // 25 kHz
-#define I2C_NOINTERRUPT 1 // interrupts may interfere with SMBus operations
-#include <SoftI2CMaster.h> // https://github.com/felias-fogg/SoftI2CMaster
+#include <Arduino.h>
+#include <Wire.h>
 
 #define ManufacturerAccess          0x00
 #define RemainingCapacityAlarm      0x01
@@ -195,38 +170,34 @@ uint8_t ack[1] = { 0x00 }; // acknowledge payload array
 uint8_t err[1] = { 0xFF }; // error payload array
 uint8_t ret[1]; // general array to store arbitrary bytes
 
+void send_usb_packet(uint8_t command, uint8_t subdatacode, uint8_t *payloadbuff, uint16_t payloadbufflen);
+void handle_usb_data(void);
+
 uint8_t read_byte(uint8_t reg)
 {
-    i2c_start((sb_address << 1) | I2C_WRITE);
-    i2c_write(reg);
-    i2c_rep_start((sb_address << 1) | I2C_READ);
-
-    uint8_t ret = i2c_read(true);
-
-    i2c_stop();
+    Wire.beginTransmission(sb_address);
+    Wire.write(reg);
+    uint8_t ret = Wire.read();
+    Wire.endTransmission();
     return ret;
 }
 
 uint8_t write_byte(uint8_t reg, uint8_t data)
 {
-    i2c_start((sb_address << 1) | I2C_WRITE);
-    i2c_write(reg);
-
-    uint8_t ret = i2c_write(data);
-
-    i2c_stop();
+    Wire.beginTransmission(sb_address);
+    Wire.write(reg);
+    uint8_t ret = Wire.write(reg);
+    Wire.endTransmission();
     return ret; // number of bytes written
 }
 
 uint16_t read_word(uint8_t reg, bool reverse = true)
 {
-    i2c_start((sb_address << 1) | I2C_WRITE);
-    i2c_write(reg);
-    i2c_rep_start((sb_address << 1) | I2C_READ);
-
-    uint8_t b1 = i2c_read(false);
-    uint8_t b2 = i2c_read(true);
-    i2c_stop();
+    Wire.beginTransmission(sb_address);
+    Wire.write(reg);
+    uint8_t b1 = Wire.read();
+    uint8_t b2 = Wire.read();
+    Wire.endTransmission();
 
     if (!reverse) return ((b1 << 8) | b2);
     else return ((b2 << 8) | b1);
@@ -234,55 +205,45 @@ uint16_t read_word(uint8_t reg, bool reverse = true)
 
 uint8_t write_word(uint8_t reg, uint16_t data, bool reverse = true)
 {
-    i2c_start((sb_address << 1) | I2C_WRITE);
-    i2c_write(reg);
+    Wire.beginTransmission(sb_address);
+    Wire.write(reg);
 
     if (reverse)
     {
-        i2c_write(data & 0xFF);
-        i2c_write((data >> 8) & 0xFF);
+        Wire.write(data & 0xFF);
+        Wire.write((data >> 8) & 0xFF);
     }
     else
     {
-        i2c_write((data >> 8) & 0xFF);
-        i2c_write(data & 0xFF);
+        Wire.write((data >> 8) & 0xFF);
+        Wire.write(data & 0xFF);
     }
 
-    i2c_stop();
+    Wire.endTransmission();
     return 2;
 }
 
 uint8_t read_block(uint8_t reg, uint8_t* block_buffer)
 {
-    i2c_start((sb_address << 1) | I2C_WRITE);
-    i2c_write(reg);
-    i2c_rep_start((sb_address << 1) | I2C_READ);
+    Wire.beginTransmission(sb_address);
+    Wire.write(reg);
+    uint8_t read_length = Wire.read();
 
-    uint8_t read_length = i2c_read(false); // first byte is length
     block_buffer[0] = read_length;
 
-    for (uint8_t i = 0; i < (read_length - 1); i++) // last byte needs to be nack'd
-    {
-        block_buffer[1 + i] = i2c_read(false);
-    }
+    Wire.readBytes(block_buffer + 1, read_length);
 
-    block_buffer[read_length] = i2c_read(true); // this will nack the last byte and store it in i's num_bytes-1 address.
-    i2c_stop();
+    Wire.endTransmission();
     return (read_length + 1);
 }
 
 uint8_t write_block(uint8_t reg, uint8_t* block_buffer, uint8_t block_buffer_length)
 {
-    i2c_start((sb_address << 1) | I2C_WRITE);
-    i2c_write(reg);
-    i2c_write(block_buffer_length);
-
-    for (uint8_t i = 0; i < block_buffer_length; i++)
-    {
-         i2c_write(block_buffer[i]);
-    }
-
-    i2c_stop();
+    Wire.beginTransmission(sb_address);
+    Wire.write(reg);
+    Wire.write(block_buffer_length);
+    Wire.write(block_buffer, block_buffer_length);
+    Wire.endTransmission();
     return block_buffer_length;
 }
 
@@ -292,17 +253,15 @@ void scan_smbus_address(void)
     
     for (uint8_t i = 3; i < 120; i++)
     {
-        bool ack = i2c_start((i << 1) | I2C_WRITE); 
+        Wire.beginTransmission(i);
+        uint8_t ret = Wire.endTransmission();
 
-        if (ack)
+        if (ret == 0)
         {
-            i2c_stop();
             scan_smbus_address_result[scan_smbus_address_result_ptr] = i;
             scan_smbus_address_result_ptr++;
             if (scan_smbus_address_result_ptr > 7) scan_smbus_address_result_ptr = 7;
         }
-
-        i2c_stop();
     }
 
     if (scan_smbus_address_result_ptr > 0) send_usb_packet(status, sd_scan_smbus_address, scan_smbus_address_result, scan_smbus_address_result_ptr);
@@ -342,7 +301,6 @@ void read_rom_byte(void)
     
     while (!done)
     {
-        wdt_reset(); // reset watchdog timer here so no autoreset occurs; this while-loop blocks the main loop for more than 4 seconds
         write_word(SetROMAddress, address); // set address to the next row
 
         counter = 0;
@@ -395,8 +353,6 @@ void read_rom_block(void)
     
     while (!done)
     {
-        wdt_reset(); // reset watchdog timer here so no autoreset occurs; this while-loop blocks the main loop for more than 4 seconds
-
         counter = 0;
         do
         {
@@ -447,30 +403,6 @@ uint8_t calculate_checksum(uint8_t *buff, uint16_t index, uint16_t bufflen)
 }
 
 /*************************************************************************
-Function: free_ram()
-Purpose:  returns how many bytes exists between the end of the heap and 
-          the last allocated memory on the stack, so it is effectively 
-          how much the stack/heap can grow before they collide.
-**************************************************************************/
-uint16_t free_ram(void)
-{
-    extern int  __bss_end; 
-    extern int  *__brkval; 
-    uint16_t free_memory; 
-    
-    if((int)__brkval == 0)
-    {
-        free_memory = ((int)&free_memory) - ((int)&__bss_end); 
-    }
-    else 
-    {
-        free_memory = ((int)&free_memory) - ((int)__brkval); 
-    }
-    return free_memory; 
-
-} // end of free_ram
-
-/*************************************************************************
 Function: send_usb_packet()
 Purpose:  assemble and send data packet through serial link (UART0)
 Inputs:   - one source byte,
@@ -490,18 +422,6 @@ void send_usb_packet(uint8_t command, uint8_t subdatacode, uint8_t *payloadbuff,
     uint16_t packet_length = payloadbufflen + 6;    
     bool payload_bytes = true;
     uint8_t datacode = 0;
-
-    // Check if there's enough RAM to store the whole packet
-    if (free_ram() < (packet_length + 50)) // require +50 free bytes to be safe
-    {
-        uint8_t error[7] = { 0x3D, 0x00, 0x03, 0x8F, 0xFD, 0xFF, 0x8E }; // prepare the "not enough MCU RAM" error message
-        for (uint8_t i = 0; i < 7; i++)
-        {
-            Serial.write(error[i]);
-        }
-        return;
-    }
-
     uint8_t packet[packet_length]; // create a temporary byte-array
 
     if (payloadbufflen <= 0) payload_bytes = false;
@@ -926,14 +846,12 @@ void handle_usb_data(void)
 
 void setup()
 {
-    i2c_init();
+    Wire.begin();
     Serial.begin(250000);
-    wdt_enable(WDTO_4S); // reset program if it hangs for more than 4 seconds
     send_usb_packet(reset, 0x01, ack, 1); // device ready
 }
 
 void loop()
 {
-    wdt_reset(); // reset watchdog timer to 0 seconds so no accidental restart occurs
     handle_usb_data();
 }
