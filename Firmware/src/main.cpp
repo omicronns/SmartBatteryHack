@@ -583,7 +583,7 @@ void handle_usb_data(void)
                 case reset: // 0x00 - reset device request
                 {
                     send_usb_packet(reset, 0x00, ack, 1); // confirm action
-                    while (true); // enter into an infinite loop; watchdog timer doesn't get reset this way so it restarts the program eventually
+                    NVIC_SystemReset();
                     break; // not necessary but every case needs a break
                 }
                 case handshake: // 0x01 - handshake request coming from an external computer

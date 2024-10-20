@@ -159,6 +159,7 @@ namespace SmartBatteryHack
                         Serial.Parity = Parity.None;
                         Serial.ReadTimeout = 500;
                         Serial.WriteTimeout = 500;
+                        Serial.DtrEnable = true;
 
                         Util.UpdateTextBox(CommunicationTextBox, "[INFO] Connecting to " + Serial.PortName, null);
 
